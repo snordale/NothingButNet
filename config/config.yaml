@@ -1,0 +1,23 @@
+data_collection:
+  seasons_range: [2015, 2024]
+  request_delay: 3
+  cache_duration_days: 1
+  data_directory: "data/"
+  
+model:
+  train_test_split: 0.2
+  validation_split: 0.2
+  batch_size: 32
+  epochs: 100
+  early_stopping_patience: 10
+  learning_rate: 0.001
+  
+features:
+  lookback_games: 10
+  h2h_games: 3
+  
+paths:
+  raw_data: "data/raw/"
+  processed_data: "data/processed/"
+  models: "data/models/"
+  logs: "logs/" 
