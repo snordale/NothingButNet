@@ -28,6 +28,41 @@ class NBADataCollector:
         self.cache_dir = Path('data/cache')
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
+        # Team name mappings
+        self.team_name_map = {
+            # ESPN to Basketball Reference
+            'LA Clippers': 'Los Angeles Clippers',
+            'LA Lakers': 'Los Angeles Lakers',
+            'NY Knicks': 'New York Knicks',
+            'GS Warriors': 'Golden State Warriors',
+            'SA Spurs': 'San Antonio Spurs',
+            'UTAH': 'Utah Jazz',
+            'PHX': 'Phoenix Suns',
+            'SAC': 'Sacramento Kings',
+            'POR': 'Portland Trail Blazers',
+            'OKC': 'Oklahoma City Thunder',
+            'NO Pelicans': 'New Orleans Pelicans',
+            'MIN': 'Minnesota Timberwolves',
+            'MEM': 'Memphis Grizzlies',
+            'HOU': 'Houston Rockets',
+            'DEN': 'Denver Nuggets',
+            'DAL': 'Dallas Mavericks',
+            'WAS': 'Washington Wizards',
+            'TOR': 'Toronto Raptors',
+            'PHI': 'Philadelphia 76ers',
+            'ORL': 'Orlando Magic',
+            'MIL': 'Milwaukee Bucks',
+            'MIA': 'Miami Heat',
+            'IND': 'Indiana Pacers',
+            'DET': 'Detroit Pistons',
+            'CLE': 'Cleveland Cavaliers',
+            'CHI': 'Chicago Bulls',
+            'CHA': 'Charlotte Hornets',
+            'BOS': 'Boston Celtics',
+            'BKN': 'Brooklyn Nets',
+            'ATL': 'Atlanta Hawks'
+        }
+        
         # Set up sessions for different sources
         self.bref_session = self._create_session()
         self.espn_session = self._create_session()
@@ -180,18 +215,61 @@ class NBADataCollector:
             response = self._make_request(url, source='espn')
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Parse ESPN's schedule page
-            # Note: Implementation will depend on ESPN's HTML structure
-            # This is a placeholder for the actual implementation
             games = []
-            for game in soup.find_all('div', class_='game-info'):
-                games.append({
-                    'date': None,  # Parse date
-                    'away_team': None,  # Parse away team
-                    'home_team': None,  # Parse home team
-                    'away_points': None,  # Parse away points
-                    'home_points': None  # Parse home points
-                })
+            # Find all game rows
+            game_rows = soup.find_all('div', {'class': 'ScheduleTables'})
+            
+            for date_section in game_rows:
+                try:
+                    # Get date from section header
+                    date_str = date_section.find('h2', {'class': 'Table__Title'}).text.strip()
+                    game_date = pd.to_datetime(date_str)
+                    
+                    # Find all games for this date
+                    game_items = date_section.find_all('tr', {'class': 'Table__TR'})
+                    
+                    for game in game_items:
+                        try:
+                            teams = game.find_all('td', {'class': 'Table__TD'})
+                            if len(teams) < 2:
+                                continue
+                                
+                            away_team = teams[0].find('a', {'class': 'AnchorLink'}).text.strip()
+                            home_team = teams[1].find('a', {'class': 'AnchorLink'}).text.strip()
+                            
+                            # Standardize team names
+                            away_team = self.standardize_team_name(away_team)
+                            home_team = self.standardize_team_name(home_team)
+                            
+                            # Try to get scores if game is complete
+                            score_cells = game.find_all('td', {'class': 'Table__TD'})
+                            away_score = None
+                            home_score = None
+                            
+                            if len(score_cells) >= 4:
+                                try:
+                                    away_score = int(score_cells[2].text.strip())
+                                    home_score = int(score_cells[3].text.strip())
+                                except (ValueError, IndexError):
+                                    pass
+                            
+                            games.append({
+                                'Date': game_date,
+                                'Season': season,
+                                'away_team': away_team,
+                                'home_team': home_team,
+                                'away_points': away_score,
+                                'home_points': home_score,
+                                'source': 'espn'
+                            })
+                            
+                        except Exception as e:
+                            logging.warning(f"Error parsing game: {e}")
+                            continue
+                            
+                except Exception as e:
+                    logging.warning(f"Error parsing date section: {e}")
+                    continue
             
             return pd.DataFrame(games)
             
@@ -452,6 +530,10 @@ class NBADataCollector:
         standings_df = standings_df.loc[:, ~standings_df.columns.str.contains('^Unnamed')]
         
         return standings_df
+
+    def standardize_team_name(self, name):
+        """Convert team names to Basketball Reference format"""
+        return self.team_name_map.get(name, name)
 
 def main():
     # Initialize database
