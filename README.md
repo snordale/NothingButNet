@@ -11,6 +11,9 @@ NothingButNet is a sophisticated machine learning system that predicts NBA game 
 - Automated daily updates and model retraining
 - Confidence-based betting recommendations
 - Detailed insights and reporting
+- PostgreSQL database for reliable data storage
+- Multi-source data collection with rate limiting
+- Local data caching for efficiency
 
 ## Installation
 
@@ -31,7 +34,40 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip3 install -r requirements.txt
 ```
 
+4. Install PostgreSQL:
+```bash
+# macOS (using Homebrew)
+brew install postgresql
+
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install postgresql postgresql-contrib
+
+# Start PostgreSQL service
+# macOS
+brew services start postgresql
+
+# Ubuntu/Debian
+sudo service postgresql start
+```
+
+5. Set up environment variables:
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit .env with your configuration
+# Required variables:
+# NBA_DATABASE_URL=postgresql://localhost/nothingbutnet
+```
+
 ## Usage
+
+### Database Setup
+```bash
+# Initialize the database
+python3 scripts/setup_db.py
+```
 
 ### Get Today's Predictions
 ```bash
@@ -61,6 +97,13 @@ The system can be configured by editing `config/config.yaml`. Key settings inclu
 - Automation schedules
 - Performance tracking metrics
 
+### Environment Variables
+The following environment variables can be configured in `.env`:
+- `NBA_DATABASE_URL`: PostgreSQL database URL
+- `KAGGLE_USERNAME`: (Optional) Kaggle username for additional data
+- `KAGGLE_KEY`: (Optional) Kaggle API key
+- `ANTHROPIC_API_KEY`: (Optional) For automated improvements
+
 ## Project Structure
 ```
 NothingButNet/
@@ -71,17 +114,47 @@ NothingButNet/
 │       ├── automation/       # Automation scripts
 │       ├── data_collector.py # Data collection
 │       ├── predict.py        # Prediction interface
+│       ├── database.py       # Database operations
 │       └── config.py         # Configuration
 ├── data/
 │   ├── raw/                 # Raw collected data
 │   ├── processed/           # Processed datasets
 │   ├── models/             # Trained models
+│   ├── cache/              # Cached responses
 │   └── predictions/        # Prediction history
 ├── logs/                   # Logs and reports
 ├── config/                 # Configuration files
-├── requirements.txt        # Dependencies
+├── scripts/               # Setup and utility scripts
+├── .env                   # Environment variables
+├── .env.example          # Environment template
+├── requirements.txt       # Dependencies
 └── README.md
 ```
+
+## Data Collection Strategy
+The system employs a robust data collection approach:
+
+1. **Multiple Data Sources**:
+   - Basketball Reference (primary source)
+   - ESPN (backup source)
+   - Kaggle datasets (supplementary)
+
+2. **Rate Limiting**:
+   - Basketball Reference: 6 seconds between requests
+   - ESPN: 3 seconds between requests
+   - Exponential backoff for failed requests
+   - Random jitter to avoid synchronized requests
+
+3. **Data Caching**:
+   - Local caching of responses
+   - 24-hour cache validity
+   - Reduces unnecessary API calls
+   - Improves response time
+
+4. **Error Handling**:
+   - Automatic failover between sources
+   - Comprehensive error logging
+   - Retry mechanism with backoff
 
 ## Performance Tracking
 The system maintains detailed performance records and generates daily reports including:
@@ -102,6 +175,14 @@ The system uses a conservative approach to betting recommendations:
 
 ## Data Sources
 - Basketball Reference (primary)
+  - Game schedules and results
+  - Team advanced statistics
+  - Player statistics
+  - Historical data
+- ESPN (backup)
+  - Live game data
+  - Team statistics
+  - Alternative data source
 - Kaggle datasets (supplementary)
 - Live betting lines
 - Player statistics and injury reports
@@ -111,6 +192,12 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Basketball Reference Notes
+- Maximum 20 requests per minute
+- 6-second delay between requests recommended
+- Rate limits apply regardless of bot type
+- Use caching to minimize requests
 
 # Goal
 Predict the outcomes of a night's NBA and NCAA games against the spread.
