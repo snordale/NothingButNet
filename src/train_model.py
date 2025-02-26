@@ -1,7 +1,7 @@
 import os
 import logging
-from NBADataCollector import NBADataCollector
-from NBASpreadPredictor import NBASpreadPredictor
+from nothingbutnet.data_collector import NBADataCollector
+from nothingbutnet.models.spread_predictor import SpreadPredictor
 
 def setup_logging():
     logging.basicConfig(
@@ -45,18 +45,15 @@ def main():
         
         # Initialize predictor and train model
         logging.info("Training model...")
-        predictor = NBASpreadPredictor()
-        
-        # Validate data
-        predictor.validate_data(games_df, players_df, standings_df)
+        predictor = SpreadPredictor()
         
         # Train model
-        history, test_mae = predictor.train(games_df, players_df, standings_df)
+        history = predictor.train(games_df, players_df, standings_df)
         
         # Save model
-        predictor.save_model()
+        predictor.save_model('data/models/spread_predictor.pt')
         
-        logging.info(f"Training complete! Test MAE: {test_mae:.1f} points")
+        logging.info(f"Training complete! Test MAE: {history['test_mae']:.1f} points")
         
     except Exception as e:
         logging.error(f"Error in training pipeline: {e}", exc_info=True)

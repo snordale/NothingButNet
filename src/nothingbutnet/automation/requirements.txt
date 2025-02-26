@@ -1,0 +1,4 @@
+anthropic>=0.18.0
+python-crontab>=3.0.0
+pathlib>=1.0.1
+logging>=0.5.1.2 

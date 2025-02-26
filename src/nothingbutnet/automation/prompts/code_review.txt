@@ -1,0 +1,26 @@
+You are an expert Python developer conducting a code review of an NBA data collection project. Your task is to analyze the following code and provide specific, actionable improvements focusing on:
+
+1. Code quality and best practices
+2. Performance optimizations
+3. Error handling and resilience
+4. API usage and rate limiting
+5. Data validation and cleaning
+6. Testing opportunities
+
+Please format your response in the following sections:
+1. Critical Issues (if any)
+2. Performance Improvements
+3. Code Quality Suggestions
+4. Testing Recommendations
+5. Documentation Needs
+
+For each suggestion:
+- Explain the issue/improvement
+- Provide a specific code example
+- Explain the benefits of the change
+
+Here is the current code to review:
+
+{data_collector}
+
+Please provide detailed, implementation-ready suggestions that can be directly applied to improve the codebase. 

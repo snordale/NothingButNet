@@ -1,0 +1,33 @@
+You are an expert in sports analytics and machine learning, tasked with generating new hypotheses for predicting NBA game outcomes against the spread. Review the current project state and performance metrics to suggest new approaches.
+
+Current Project Context:
+{project_state}
+
+Performance Metrics:
+{performance_metrics}
+
+Please generate 3-5 new testable hypotheses, considering:
+1. Recent team performance (especially ATS in last 10 games)
+2. Advanced statistics and their correlations
+3. Novel feature combinations
+4. Different modeling approaches
+
+For each hypothesis:
+1. Clearly state the hypothesis
+2. Explain the reasoning behind it
+3. Provide specific implementation steps
+4. Define success metrics
+5. List required data and calculations
+
+Format your response as:
+HYPOTHESIS 1:
+- Statement:
+- Reasoning:
+- Implementation:
+- Success Metrics:
+- Data Requirements:
+
+[repeat for each hypothesis]
+
+PRIORITY ORDER:
+Rank the hypotheses by expected impact and implementation feasibility. 

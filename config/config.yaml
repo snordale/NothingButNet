@@ -1,23 +1,59 @@
+automation:
+  performance_analysis_frequency: daily
+  retrain_frequency: weekly
+  update_frequency: daily
+  update_time: '10:00'
 data_collection:
-  seasons_range: [2015, 2024]
+  cache_duration_hours: 24
+  data_sources:
+  - basketball_reference
+  - kaggle
   request_delay: 3
-  cache_duration_days: 1
-  data_directory: "data/"
-  
+  required_data:
+    betting_lines: true
+    games: true
+    players: true
+    standings: true
+  seasons:
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+features:
+  h2h_games: 3
+  lookback_games: 10
+  use_advanced_stats: true
+  use_injuries: true
+  use_player_stats: true
 model:
+  batch_size: 32
+  confidence_thresholds:
+    high: 0.7
+    low: 0.5
+    medium: 0.6
+  early_stopping_patience: 10
+  epochs: 100
+  learning_rate: 0.001
+  min_games_for_prediction: 5
   train_test_split: 0.2
   validation_split: 0.2
-  batch_size: 32
-  epochs: 100
-  early_stopping_patience: 10
-  learning_rate: 0.001
-  
-features:
-  lookback_games: 10
-  h2h_games: 3
-  
 paths:
-  raw_data: "data/raw/"
-  processed_data: "data/processed/"
-  models: "data/models/"
-  logs: "logs/" 
+  logs: /Users/snordale/projects/NothingButNet/logs
+  models: /Users/snordale/projects/NothingButNet/data/models
+  performance: /Users/snordale/projects/NothingButNet/data/performance
+  predictions: /Users/snordale/projects/NothingButNet/data/predictions
+  processed_data: /Users/snordale/projects/NothingButNet/data/processed
+  raw_data: /Users/snordale/projects/NothingButNet/data/raw
+prediction:
+  max_daily_bets: 3
+  min_confidence_for_bet: 0.6
+  track_metrics:
+  - accuracy
+  - roi
+  - kelly_criterion
+  - sharp_ratio
