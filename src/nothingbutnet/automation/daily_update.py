@@ -62,18 +62,19 @@ class AutomationManager:
         cron.write()
         logger.info("Cron jobs set up successfully")
     
-    def daily_update(self):
+    def update(self):
         """Run daily update tasks"""
         logger.info("Starting daily update")
         
         try:
-            # Update data
-            logger.info("Updating data...")
+            # Fetch new data
+            logger.info("Fetching new data...")
             games_df, advanced_df = self.data_collector.fetch_basketball_reference()
             players_df = self.data_collector.fetch_player_stats(2024)
-            standings_df = self.data_collector.fetch_standings()
+            standings_df = self.data_collector.fetch_standings(force_refresh=True)  # Force refresh standings
             
-            # Save updated data
+            # Save raw data
+            logger.info("Saving raw data...")
             games_df.to_parquet(Path(CONFIG['paths']['raw_data']) / 'games.parquet')
             advanced_df.to_parquet(Path(CONFIG['paths']['raw_data']) / 'advanced.parquet')
             players_df.to_parquet(Path(CONFIG['paths']['raw_data']) / 'players.parquet')
@@ -205,7 +206,7 @@ def main():
     elif args.retrain:
         manager.retrain_model()
     else:
-        manager.daily_update()
+        manager.update()
 
 if __name__ == "__main__":
     main() 

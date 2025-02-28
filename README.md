@@ -46,16 +46,11 @@ pip3 install -r requirements.txt
 # macOS (using Homebrew)
 brew install postgresql
 
-# Ubuntu/Debian
-sudo apt-get update
-sudo apt-get install postgresql postgresql-contrib
 
 # Start PostgreSQL service
 # macOS
 brew services start postgresql
 
-# Ubuntu/Debian
-sudo service postgresql start
 ```
 
 5. Set up environment variables:
@@ -189,21 +184,16 @@ The system uses a conservative approach to betting recommendations:
   - Live game data
   - Team statistics
   - Alternative data source
+- NBA.com (backup)
+  - Live game data
+  - Team statistics
 - Kaggle datasets (supplementary)
 - Live betting lines
 - Player statistics and injury reports
 
-## Contributing
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
 **Important**: Never commit sensitive information such as API keys or credentials. Always use environment variables for sensitive data.
 
 ## License
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Basketball Reference Notes
 - Maximum 20 requests per minute
@@ -226,3 +216,13 @@ Any strategy is on the table, but when I personally pick games I most value team
 I think deep learning would be the most interesting, but there could be a data constraint.
 
 I leave the direction up to the AI, which should keep records of its performance and notes so that it can optimize its strategy.
+
+# Package Manager
+I use venv and pip3 to manage dependencies.
+
+# Database
+I use PostgreSQL.
+Don't delete any of the data in the database.
+
+# Data Sources
+I use Basketball Reference, ESPN, NBA.com, and Kaggle.

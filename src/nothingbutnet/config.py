@@ -1,6 +1,7 @@
 from pathlib import Path
 import yaml
 import os
+from datetime import datetime
 
 # Base paths
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -16,13 +17,13 @@ for dir_path in [DATA_DIR, MODELS_DIR, LOGS_DIR, PERFORMANCE_DIR]:
 # Default configuration
 DEFAULT_CONFIG = {
     "data_collection": {
-        "seasons": list(range(2015, 2024)),
+        "seasons": list(range(datetime.now().year - 9, datetime.now().year + 1)),
         "request_delay": 3,
         "cache_duration_hours": 24,
-        "data_sources": ["basketball_reference", "kaggle"],
+        "data_sources": ["basketball_reference"],
         "required_data": {
             "games": True,
-            "players": True,
+            "players": False,
             "standings": True,
             "betting_lines": True
         }

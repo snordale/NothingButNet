@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
+import pandas as pd
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent.parent / '.env'
@@ -65,20 +66,16 @@ class TeamStats(Base):
     games_played = Column(Integer)
     wins = Column(Integer)
     losses = Column(Integer)
-    points_scored = Column(Float)
-    points_allowed = Column(Float)
     offensive_rating = Column(Float)
     defensive_rating = Column(Float)
     net_rating = Column(Float)
     pace = Column(Float)
-    true_shooting_pct = Column(Float)
-    ats_wins = Column(Integer)
-    ats_losses = Column(Integer)
-    ats_pushes = Column(Integer)
-    last_10_wins = Column(Integer)
-    last_10_losses = Column(Integer)
-    last_10_ats_wins = Column(Integer)
-    last_10_ats_losses = Column(Integer)
+    position = Column(Integer)  # Added: Position in standings
+    games_behind = Column(Float)  # Added: Games behind leader
+    conference = Column(String)  # Added: Conference
+    win_pct = Column(Float)  # Added: Win percentage
+    points_per_game = Column(Float)  # Added: Points per game
+    points_allowed_per_game = Column(Float)  # Added: Points allowed per game
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -186,6 +183,18 @@ def save_team_stats(session, team_name, date, season, stats_dict):
         team_id=team.id,
         date=date
     ).first()
+    
+    # Convert any NaN values to None for database insertion
+    stats_dict = {k: None if pd.isna(v) else v for k, v in stats_dict.items()}
+    
+    # Add required fields if not present
+    required_fields = ['offensive_rating', 'defensive_rating', 'net_rating', 'pace',
+                      'games_played', 'wins', 'losses', 'position', 'games_behind',
+                      'conference', 'win_pct', 'points_per_game', 'points_allowed_per_game']
+    
+    for field in required_fields:
+        if field not in stats_dict:
+            stats_dict[field] = None
     
     if stats is None:
         stats = TeamStats(team_id=team.id, date=date, season=season, **stats_dict)
