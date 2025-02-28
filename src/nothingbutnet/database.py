@@ -1,19 +1,17 @@
 import os
 import logging
 from pathlib import Path
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
-import pandas as pd
 
-# Load environment variables from .env file
-env_path = Path(__file__).parent.parent.parent / '.env'
-load_dotenv(env_path)
+# Create data directory if it doesn't exist
+data_dir = Path(__file__).parent.parent.parent / 'data'
+data_dir.mkdir(exist_ok=True)
 
-# Get database URL from environment or use default
-DATABASE_URL = os.getenv('NBA_DATABASE_URL', 'postgresql://localhost/nothingbutnet')
+# Use SQLite database
+DATABASE_URL = f'sqlite:///{data_dir}/nba.db'
 
 # Create base class for declarative models
 Base = declarative_base()
@@ -26,13 +24,6 @@ class Team(Base):
     abbreviation = Column(String)
     conference = Column(String)
     division = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relationships
-    home_games = relationship('Game', foreign_keys='Game.home_team_id', back_populates='home_team')
-    away_games = relationship('Game', foreign_keys='Game.away_team_id', back_populates='away_team')
-    stats = relationship('TeamStats', back_populates='team')
 
 class Game(Base):
     __tablename__ = 'games'
@@ -44,17 +35,17 @@ class Game(Base):
     away_team_id = Column(Integer, ForeignKey('teams.id'), nullable=False)
     home_score = Column(Integer)
     away_score = Column(Integer)
-    spread = Column(Float)  # Closing spread (positive means home team favored)
-    total = Column(Float)   # Over/under
-    status = Column(String) # scheduled, in_progress, final
-    source = Column(String) # basketball_reference, espn, etc.
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    game_type = Column(String)  # regular_season, playoffs, preseason
     
-    # Relationships
-    home_team = relationship('Team', foreign_keys=[home_team_id], back_populates='home_games')
-    away_team = relationship('Team', foreign_keys=[away_team_id], back_populates='away_games')
-    predictions = relationship('Prediction', back_populates='game')
+    # Additional columns for betting and game context
+    point_spread = Column(Float)  # Positive means home team favored
+    total_line = Column(Float)    # Over/under
+    rest_days_home = Column(Integer)
+    rest_days_away = Column(Integer)
+    
+    # Relationships for easier querying
+    home_team = relationship('Team', foreign_keys=[home_team_id])
+    away_team = relationship('Team', foreign_keys=[away_team_id])
 
 class TeamStats(Base):
     __tablename__ = 'team_stats'
@@ -63,39 +54,51 @@ class TeamStats(Base):
     team_id = Column(Integer, ForeignKey('teams.id'), nullable=False)
     date = Column(DateTime, nullable=False)
     season = Column(Integer, nullable=False)
+    
+    # Basic stats
     games_played = Column(Integer)
     wins = Column(Integer)
     losses = Column(Integer)
-    offensive_rating = Column(Float)
-    defensive_rating = Column(Float)
-    net_rating = Column(Float)
-    pace = Column(Float)
-    position = Column(Integer)  # Added: Position in standings
-    games_behind = Column(Float)  # Added: Games behind leader
-    conference = Column(String)  # Added: Conference
-    win_pct = Column(Float)  # Added: Win percentage
-    points_per_game = Column(Float)  # Added: Points per game
-    points_allowed_per_game = Column(Float)  # Added: Points allowed per game
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    points_per_game = Column(Float)
+    points_allowed_per_game = Column(Float)
+    win_pct = Column(Float)
     
-    # Relationships
-    team = relationship('Team', back_populates='stats')
-
-class Prediction(Base):
-    __tablename__ = 'predictions'
+    # Additional stats for model features
+    last_10_wins = Column(Integer)
+    last_10_losses = Column(Integer)
+    last_10_points_scored = Column(Float)
+    last_10_points_allowed = Column(Float)
+    home_wins = Column(Integer)
+    home_losses = Column(Integer)
+    away_wins = Column(Integer)
+    away_losses = Column(Integer)
+    streak = Column(Integer)  # Positive for win streak, negative for loss streak
     
-    id = Column(Integer, primary_key=True)
-    game_id = Column(Integer, ForeignKey('games.id'), nullable=False)
-    predicted_spread = Column(Float, nullable=False)  # Positive means home team favored
-    confidence = Column(Float, nullable=False)
-    model_version = Column(String)
-    features_used = Column(String)  # JSON string of feature names
-    created_at = Column(DateTime, default=datetime.utcnow)
-    was_correct = Column(Boolean)  # Set after game completion
+    # Advanced stats
+    point_diff = Column(Float)  # Average point differential
+    home_point_diff = Column(Float)
+    away_point_diff = Column(Float)
+    last_10_point_diff = Column(Float)
     
-    # Relationships
-    game = relationship('Game', back_populates='predictions')
+    # New advanced stats
+    offensive_rating = Column(Float)  # Points scored per 100 possessions
+    defensive_rating = Column(Float)  # Points allowed per 100 possessions
+    net_rating = Column(Float)  # Offensive rating minus defensive rating
+    pace = Column(Float)  # Possessions per 48 minutes
+    
+    # Rebounding stats
+    offensive_rebounds_per_game = Column(Float)
+    defensive_rebounds_per_game = Column(Float)
+    total_rebounds_per_game = Column(Float)
+    offensive_rebound_pct = Column(Float)  # Percentage of available offensive rebounds grabbed
+    defensive_rebound_pct = Column(Float)  # Percentage of available defensive rebounds grabbed
+    
+    # Turnover stats
+    turnovers_per_game = Column(Float)
+    turnover_pct = Column(Float)  # Turnovers per 100 possessions
+    
+    # Relationship
+    team = relationship('Team')
 
 def init_db(drop_all=False):
     """Initialize the database"""
@@ -136,43 +139,55 @@ def upsert_team(session, name, abbreviation=None, conference=None, division=None
     session.commit()
     return team
 
-def save_game(session, date, season, home_team, away_team, home_score=None,
-              away_score=None, spread=None, total=None, status='scheduled', source=None):
+def save_game(session, date, season, home_team, away_team, home_score=None, away_score=None, 
+              game_type='regular_season', point_spread=None, total_line=None,
+              rest_days_home=None, rest_days_away=None):
     """Save a game to the database"""
-    # Ensure teams exist
-    home = upsert_team(session, home_team)
-    away = upsert_team(session, away_team)
+    # Get team IDs
+    home_team_id = upsert_team(session, home_team).id
+    away_team_id = upsert_team(session, away_team).id
     
-    # Check if game exists
-    game = session.query(Game).filter_by(
-        date=date,
-        home_team_id=home.id,
-        away_team_id=away.id
+    # Check if game already exists
+    existing_game = session.query(Game).filter(
+        Game.date == date,
+        Game.home_team_id == home_team_id,
+        Game.away_team_id == away_team_id
     ).first()
     
-    if game is None:
+    if existing_game:
+        # Update existing game
+        existing_game.season = season
+        existing_game.home_score = home_score
+        existing_game.away_score = away_score
+        existing_game.game_type = game_type
+        existing_game.point_spread = point_spread
+        existing_game.total_line = total_line
+        existing_game.rest_days_home = rest_days_home
+        existing_game.rest_days_away = rest_days_away
+        game = existing_game
+    else:
+        # Create new game
         game = Game(
             date=date,
             season=season,
-            home_team_id=home.id,
-            away_team_id=away.id,
+            home_team_id=home_team_id,
+            away_team_id=away_team_id,
             home_score=home_score,
             away_score=away_score,
-            spread=spread,
-            total=total,
-            status=status,
-            source=source
+            game_type=game_type,
+            point_spread=point_spread,
+            total_line=total_line,
+            rest_days_home=rest_days_home,
+            rest_days_away=rest_days_away
         )
         session.add(game)
-    else:
-        game.home_score = home_score or game.home_score
-        game.away_score = away_score or game.away_score
-        game.spread = spread or game.spread
-        game.total = total or game.total
-        game.status = status
-        game.source = source or game.source
     
-    session.commit()
+    try:
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        raise e
+    
     return game
 
 def save_team_stats(session, team_name, date, season, stats_dict):
@@ -184,18 +199,6 @@ def save_team_stats(session, team_name, date, season, stats_dict):
         date=date
     ).first()
     
-    # Convert any NaN values to None for database insertion
-    stats_dict = {k: None if pd.isna(v) else v for k, v in stats_dict.items()}
-    
-    # Add required fields if not present
-    required_fields = ['offensive_rating', 'defensive_rating', 'net_rating', 'pace',
-                      'games_played', 'wins', 'losses', 'position', 'games_behind',
-                      'conference', 'win_pct', 'points_per_game', 'points_allowed_per_game']
-    
-    for field in required_fields:
-        if field not in stats_dict:
-            stats_dict[field] = None
-    
     if stats is None:
         stats = TeamStats(team_id=team.id, date=date, season=season, **stats_dict)
         session.add(stats)
@@ -204,19 +207,4 @@ def save_team_stats(session, team_name, date, season, stats_dict):
             setattr(stats, key, value)
     
     session.commit()
-    return stats
-
-def save_prediction(session, game_id, predicted_spread, confidence,
-                   model_version, features_used):
-    """Save a prediction to the database"""
-    prediction = Prediction(
-        game_id=game_id,
-        predicted_spread=predicted_spread,
-        confidence=confidence,
-        model_version=model_version,
-        features_used=features_used
-    )
-    
-    session.add(prediction)
-    session.commit()
-    return prediction 
+    return stats 

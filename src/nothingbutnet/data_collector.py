@@ -1,10 +1,10 @@
+import logging
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import time
 from datetime import datetime, timedelta
 import os
-import logging
 from io import StringIO
 import random
 import json
@@ -13,14 +13,22 @@ from .database import get_session, save_game, save_team_stats, init_db, Game, Te
 from sqlalchemy import func, and_
 from .config import CONFIG
 
-# Lazy import of kaggle to prevent automatic authentication
-KAGGLE_AVAILABLE = False
-try:
-    import importlib
-    kaggle_spec = importlib.util.find_spec("kaggle")
-    KAGGLE_AVAILABLE = kaggle_spec is not None
-except ImportError:
-    pass
+def setup_kaggle():
+    try:
+        import kaggle
+        return True
+    except ImportError:
+        logging.warning("Kaggle package not available. Installing kaggle package...")
+        try:
+            import subprocess
+            subprocess.check_call(['pip3', 'install', 'kaggle'])
+            import kaggle
+            return True
+        except Exception as e:
+            logging.error(f"Error installing kaggle package: {e}")
+            return False
+
+KAGGLE_AVAILABLE = setup_kaggle()
 
 class NBADataCollector:
     def __init__(self, reload_historical=False, cache_ttl_hours=24):
@@ -265,160 +273,113 @@ class NBADataCollector:
             return False
     
     def fetch_basketball_reference(self):
-        """Fetch data from Basketball Reference with incremental updates"""
-        session = get_session()
-        logging.info("Starting Basketball Reference data collection")
+        """Fetch data from Basketball Reference"""
+        print("Fetching Basketball Reference data...")
+        
+        games_df = pd.DataFrame()
+        advanced_df = pd.DataFrame()
         
         try:
-            # Get existing games by season
-            existing_games = pd.read_sql(
-                'SELECT season, COUNT(*) as game_count FROM games GROUP BY season',
-                session.bind
-            ).set_index('season')['game_count'].to_dict()
-            
-            logging.info("Existing games by season:")
-            for season, count in existing_games.items():
-                logging.info(f"  {season}: {count} games")
-            
-            # Determine seasons to fetch
+            # Get current season
             current_season = datetime.now().year if datetime.now().month >= 10 else datetime.now().year - 1
-            seasons_to_fetch = []
             
-            # Expected games per season (accounting for COVID seasons)
-            expected_games = {
-                2021: 1080,  # COVID-shortened (72 games per team)
-                2020: 1080,  # COVID-interrupted
-            }
-            # All other seasons should have 1230 games (30 teams × 82 games ÷ 2)
-            
-            # Check each season in our range
-            for season in self.seasons:
-                games_in_season = existing_games.get(season, 0)
-                expected = expected_games.get(season, 1230)
+            # Fetch data for each season
+            for season in range(current_season - 9, current_season + 1):
+                print(f"\nProcessing season {season}...")
                 
-                # Add season if:
-                # 1. It's the current season
-                # 2. It's missing games
-                # 3. We have no games from it
-                if (season == current_season or 
-                    games_in_season < expected or 
-                    season not in existing_games):
-                    seasons_to_fetch.append(season)
-            
-            if not seasons_to_fetch:
-                logging.info("All seasons have expected number of games")
-                return None, None
-            
-            logging.info(f"Will fetch data for seasons: {seasons_to_fetch}")
-            
-            all_games = []
-            all_advanced = []
-            
-            # Track progress
-            total_games = 0
-            successful_games = 0
-            failed_games = 0
-            
-            for season in seasons_to_fetch:
-                logging.info(f"Processing season {season}")
-                months = ['october', 'november', 'december', 'january', 'february', 'march', 'april', 'may']
-                season_games = []
-                
-                for month in months:
+                # Fetch monthly schedule pages
+                for month in ['october', 'november', 'december', 'january', 'february', 'march', 'april']:
                     try:
-                        schedule_url = f"{self.bref_url}/leagues/NBA_{season}_games-{month}.html"
-                        logging.info(f"Fetching {month} {season} games from {schedule_url}")
+                        # Construct URL
+                        if month in ['october', 'november', 'december']:
+                            year = season
+                        else:
+                            year = season + 1
+                            
+                        url = f'https://www.basketball-reference.com/leagues/NBA_{season}_games-{month}.html'
                         
-                        schedule_response = self._make_request(schedule_url, source='bref', max_retries=3)
-                        if schedule_response and schedule_response.ok:
-                            schedule_df = pd.read_html(StringIO(schedule_response.text))[0]
+                        # Check cache first
+                        cache_key = f'bref_schedule_{season}_{month}'
+                        cached_data = self._get_cached_data(cache_key)
+                        
+                        if cached_data is not None:
+                            month_df = cached_data
+                        else:
+                            # Respect rate limit
+                            self._respect_rate_limit('bref')
                             
-                            # Convert date before filtering
-                            schedule_df['Date'] = pd.to_datetime(schedule_df['Date'])
-                            
-                            # Don't filter by date anymore - we'll handle duplicates later
-                            schedule_df['Season'] = season
-                            season_games.append(schedule_df)
-                            games_count = len(schedule_df)
-                            total_games += games_count
-                            successful_games += games_count
-                            logging.info(f"Added {games_count} games from {month} {season}")
+                            # Fetch data
+                            response = self._make_request(url)
+                            if response is None:
+                                continue
                                 
+                            # Parse HTML
+                            tables = pd.read_html(response.text)
+                            if not tables:
+                                continue
+                                
+                            month_df = tables[0]
+                            month_df['Season'] = season
+                            
+                            # Cache the data
+                            self._save_to_cache(month_df, cache_key)
+                        
+                        # Append to main DataFrame
+                        games_df = pd.concat([games_df, month_df], ignore_index=True)
+                        
                     except Exception as e:
-                        failed_games += 1
                         logging.warning(f"Error fetching {month} {season} games: {e}")
                         continue
-                    
-                    # Save progress after each month
-                    if season_games:
-                        try:
-                            season_df = pd.concat(season_games, ignore_index=True)
-                            
-                            # Remove duplicates based on date and teams
-                            season_df = season_df.drop_duplicates(
-                                subset=['Date', 'Visitor/Neutral', 'Home/Neutral'],
-                                keep='first'
-                            )
-                            
-                            # Process and save to database immediately
-                            processed_games, processed_advanced = self.process_basketball_reference_data(
-                                season_df, 
-                                pd.DataFrame()  # Empty advanced stats, will fetch separately
-                            )
-                            
-                            if not processed_games.empty:
-                                all_games.append(processed_games)
-                                logging.info(f"Saved {len(processed_games)} games to database")
-                                
-                        except Exception as e:
-                            logging.error(f"Error processing {season} {month} data: {e}")
-                    
-                # Fetch advanced stats for the season
+                
+                # Fetch team stats
                 try:
-                    advanced_url = f"{self.bref_url}/leagues/NBA_{season}_ratings.html"
-                    logging.info(f"Fetching advanced stats for season {season}")
+                    stats_url = f'https://www.basketball-reference.com/leagues/NBA_{season}.html'
+                    cache_key = f'bref_stats_{season}'
+                    cached_stats = self._get_cached_data(cache_key)
                     
-                    advanced_response = self._make_request(advanced_url, source='bref')
-                    if advanced_response and advanced_response.ok:
-                        advanced_df = pd.read_html(StringIO(advanced_response.text))[0]
-                        advanced_df['Season'] = season
-                        all_advanced.append(advanced_df)
-                        logging.info(f"Added advanced stats for season {season}")
+                    if cached_stats is not None:
+                        season_stats = cached_stats
+                    else:
+                        # Respect rate limit
+                        self._respect_rate_limit('bref')
                         
+                        # Fetch data
+                        response = self._make_request(stats_url)
+                        if response is None:
+                            continue
+                            
+                        # Parse HTML
+                        tables = pd.read_html(response.text)
+                        if len(tables) < 4:  # We need the advanced stats table
+                            continue
+                            
+                        season_stats = tables[3]  # Advanced stats table
+                        season_stats['Season'] = season
+                        
+                        # Cache the data
+                        self._save_to_cache(season_stats, cache_key)
+                    
+                    print(f"Found stats for {season}:")
+                    print(season_stats.columns.tolist())
+                    print(f"First row: {season_stats.iloc[0].to_dict()}")
+                    
+                    # Append to main DataFrame
+                    advanced_df = pd.concat([advanced_df, season_stats], ignore_index=True)
+                    
                 except Exception as e:
-                    logging.error(f"Error fetching advanced stats for season {season}: {e}")
-                
-                # Respect rate limits between seasons
-                time.sleep(3)
-            
-            # Final stats
-            logging.info("Data collection complete!")
-            logging.info(f"Total games processed: {total_games}")
-            logging.info(f"Successful: {successful_games}")
-            logging.info(f"Failed: {failed_games}")
-            
-            if not all_games:
-                logging.warning("No new games collected")
-                return None, None
-                
-            games_df = pd.concat(all_games, ignore_index=True) if all_games else pd.DataFrame()
-            advanced_df = pd.concat(all_advanced, ignore_index=True) if all_advanced else pd.DataFrame()
-            
-            # Verify final game counts
-            if not games_df.empty:
-                final_counts = games_df.groupby('Season').size()
-                logging.info("\nFinal game counts by season:")
-                for season, count in final_counts.items():
-                    expected = expected_games.get(season, 1230)
-                    logging.info(f"  {season}: {count} games (Expected: {expected})")
-            
-            return games_df, advanced_df
-            
+                    logging.error(f"Error fetching team stats for season {season}: {e}")
+                    continue
+        
         except Exception as e:
             logging.error(f"Error in data collection: {e}")
-            return None, None
-        finally:
-            session.close()
+            raise
+        
+        # Process the data
+        if not games_df.empty and not advanced_df.empty:
+            return self.process_basketball_reference_data(games_df, advanced_df)
+        else:
+            logging.error("No data collected")
+            return pd.DataFrame(), pd.DataFrame()
     
     def fetch_espn_data(self, season):
         """Fetch game data from ESPN as a backup source"""
@@ -495,8 +456,8 @@ class NBADataCollector:
         """Clean and process Basketball Reference data"""
         session = get_session()
         
-        # Filter out playoff games before date conversion
-        games_df = games_df[games_df['Date'] != 'Playoffs']
+        # Filter out playoff games and preseason games before date conversion
+        games_df = games_df[~games_df['Date'].isin(['Playoffs', 'Preseason'])]
         
         # Clean games data
         games_df = games_df.rename(columns={
@@ -515,26 +476,37 @@ class NBADataCollector:
         games_df['date'] = pd.to_datetime(games_df['Date'])
         games_df = games_df.drop('Date', axis=1)
         
-        # Add team IDs by creating/getting teams from database
-        team_ids = {}
-        for team_name in set(games_df['home_team'].unique()) | set(games_df['away_team'].unique()):
-            if pd.notna(team_name):
-                team = upsert_team(session, team_name)
-                team_ids[team_name] = team.id
+        # Filter out preseason games based on date (preseason games are typically in October before regular season start)
+        def determine_game_type(row):
+            game_date = row['date']
+            season = row['Season']
+            
+            # Regular season typically starts mid-to-late October
+            season_start = pd.Timestamp(f"{season}-10-15")
+            season_end = pd.Timestamp(f"{season+1}-04-15")
+            
+            # In-season tournament started in 2023
+            if season >= 2023 and 'Notes' in row and isinstance(row['Notes'], str):
+                if 'IST' in row['Notes'] or 'In-Season Tournament' in row['Notes']:
+                    return 'in_season_tournament'
+            
+            # Check if it's a playoff game (after regular season end)
+            if game_date > season_end:
+                return 'playoffs'
+            
+            # Filter out preseason games (before regular season start)
+            if game_date < season_start:
+                return 'preseason'
+            
+            return 'regular_season'
         
-        # Add team IDs to games DataFrame
-        games_df['home_team_id'] = games_df['home_team'].map(team_ids)
-        games_df['away_team_id'] = games_df['away_team'].map(team_ids)
+        # Add game type
+        games_df['game_type'] = games_df.apply(determine_game_type, axis=1)
         
-        # Add point differential and winner columns
-        games_df['point_differential'] = games_df['home_points'] - games_df['away_points']
-        games_df['home_team_won'] = games_df['point_differential'] > 0
+        # Filter out preseason games
+        games_df = games_df[games_df['game_type'] != 'preseason']
         
-        # Drop unnecessary columns
-        cols_to_drop = ['Unnamed: 6', 'Unnamed: 7', 'LOG', 'Arena', 'Notes']
-        games_df = games_df.drop([col for col in cols_to_drop if col in games_df.columns], axis=1)
-        
-        # Handle MultiIndex columns in advanced stats
+        # Process advanced stats
         if isinstance(advanced_df.columns, pd.MultiIndex):
             advanced_df.columns = [f"{col[0]}_{col[1]}" if col[1] else col[0] for col in advanced_df.columns]
         
@@ -547,18 +519,58 @@ class NBADataCollector:
             'Adjusted_MOV/A': 'adjusted_mov',
             'Adjusted_ORtg/A': 'adjusted_ortg',
             'Adjusted_DRtg/A': 'adjusted_drtg',
-            'Adjusted_NRtg/A': 'adjusted_nrtg'
+            'Adjusted_NRtg/A': 'adjusted_nrtg',
+            'W': 'wins',
+            'L': 'losses',
+            'W/L%': 'win_pct',
+            'GB': 'games_behind',
+            'PS/G': 'points_per_game',
+            'PA/G': 'points_allowed_per_game'
         }
         
         # Only rename columns that exist
         rename_cols = {k: v for k, v in column_mapping.items() if k in advanced_df.columns}
         advanced_df = advanced_df.rename(columns=rename_cols)
         
-        # Clean team names
+        # Clean team names and add team IDs
         if 'team' in advanced_df.columns:
             advanced_df['team'] = advanced_df['team'].astype(str).replace(r'\*.*$', '', regex=True).str.strip()
-            # Add team IDs to advanced stats
-            advanced_df['team_id'] = advanced_df['team'].map(team_ids)
+            
+            # Calculate games played
+            advanced_df['games_played'] = advanced_df['wins'] + advanced_df['losses']
+            
+            # Save team stats to database
+            for _, row in advanced_df.iterrows():
+                try:
+                    team = upsert_team(session, row['team'])
+                    
+                    # Create stats dict with all available columns
+                    stats_dict = {
+                        'offensive_rating': row.get('offensive_rating'),
+                        'defensive_rating': row.get('defensive_rating'),
+                        'net_rating': row.get('net_rating'),
+                        'pace': row.get('pace'),
+                        'games_played': row.get('games_played'),
+                        'wins': row.get('wins'),
+                        'losses': row.get('losses'),
+                        'win_pct': row.get('win_pct'),
+                        'points_per_game': row.get('points_per_game'),
+                        'points_allowed_per_game': row.get('points_allowed_per_game'),
+                        'games_behind': row.get('games_behind', 0)
+                    }
+                    
+                    # Save stats for each date in the season
+                    for date in games_df['date'].unique():
+                        save_team_stats(
+                            session=session,
+                            team_name=row['team'],
+                            date=date,
+                            season=games_df['Season'].iloc[0],  # Use first season value
+                            stats_dict=stats_dict
+                        )
+                except Exception as e:
+                    logging.error(f"Error saving stats for team {row['team']}: {e}")
+                    continue
         
         # Save games to database
         for _, row in games_df.iterrows():
@@ -570,42 +582,16 @@ class NBADataCollector:
                 save_game(
                     session=session,
                     date=row['date'],
-                    season=row['Season'] if 'Season' in row else row['date'].year,
+                    season=row['Season'],
                     home_team=row['home_team'],
                     away_team=row['away_team'],
                     home_score=home_score,
                     away_score=away_score,
+                    game_type=row['game_type'],
                     source='basketball_reference'
                 )
             except Exception as e:
                 logging.error(f"Error saving game {row['home_team']} vs {row['away_team']}: {e}")
-                continue
-        
-        # Save team stats to database
-        for _, row in advanced_df.iterrows():
-            try:
-                stats_dict = {
-                    'offensive_rating': row.get('offensive_rating'),
-                    'defensive_rating': row.get('defensive_rating'),
-                    'net_rating': row.get('net_rating'),
-                    'pace': row.get('pace'),
-                    'games_played': row.get('G'),
-                    'wins': row.get('W'),
-                    'losses': row.get('L')
-                }
-                
-                # Convert any NaN values to None for database insertion
-                stats_dict = {k: None if pd.isna(v) else v for k, v in stats_dict.items()}
-                
-                save_team_stats(
-                    session=session,
-                    team_name=row['team'],
-                    date=datetime.now(),  # Use current date for stats snapshot
-                    season=row['Season'],
-                    stats_dict=stats_dict
-                )
-            except Exception as e:
-                logging.error(f"Error saving stats for team {row['team']}: {e}")
                 continue
         
         session.close()
@@ -632,49 +618,175 @@ class NBADataCollector:
     def fetch_kaggle_data(self):
         """Fetch and process relevant Kaggle datasets"""
         if not KAGGLE_AVAILABLE:
-            logging.warning("Kaggle package not available. Skipping Kaggle data.")
-            return None
+            logging.warning("Kaggle package not available. Installing kaggle package...")
+            try:
+                import subprocess
+                subprocess.check_call(['pip3', 'install', 'kaggle'])
+                import kaggle
+                global KAGGLE_AVAILABLE
+                KAGGLE_AVAILABLE = True
+            except Exception as e:
+                logging.error(f"Error installing kaggle package: {e}")
+                return None
             
         try:
             # Make sure you've set up your Kaggle API credentials
+            import kaggle
             kaggle.api.authenticate()
             
-            # List of relevant datasets
-            datasets = [
-                'nathanlauga/nba-games',  # Comprehensive game data
-                'wyattowalsh/basketball',  # Advanced stats
-            ]
+            # Download NBA games dataset
+            dataset = 'wyattowalsh/basketball'
+            print(f"Downloading {dataset}")
             
-            for dataset in datasets:
-                print(f"Downloading {dataset}")
-                kaggle.api.dataset_download_files(dataset, path='data', unzip=True)
+            # Create data directory if it doesn't exist
+            import os
+            os.makedirs('data/kaggle', exist_ok=True)
             
-            # Process downloaded data
-            games_df = pd.read_csv('data/games.csv')
-            games_details_df = pd.read_csv('data/games_details.csv')
+            # Download and unzip the dataset
+            kaggle.api.dataset_download_files(dataset, path='data/kaggle', unzip=True)
             
-            return self.process_kaggle_data(games_df, games_details_df)
+            # Read the relevant CSV files
+            games_df = pd.read_csv('data/kaggle/games.csv')
+            games_details_df = pd.read_csv('data/kaggle/games_details.csv')
+            teams_df = pd.read_csv('data/kaggle/teams.csv')
+            
+            # Process the data
+            processed_data = self.process_kaggle_data(games_df, games_details_df, teams_df)
+            
+            return processed_data
         except Exception as e:
-            logging.warning(f"Error fetching Kaggle data: {e}")
+            logging.error(f"Error fetching Kaggle data: {e}")
             return None
     
-    def process_kaggle_data(self, games_df, games_details_df):
+    def process_kaggle_data(self, games_df, games_details_df, teams_df):
         """Process Kaggle datasets"""
-        # Merge game details with games
-        df = pd.merge(
-            games_df,
-            games_details_df,
-            on='GAME_ID',
-            how='left'
-        )
+        session = get_session()
         
-        # Calculate advanced metrics
-        df['Efficiency'] = (
-            df['PTS'] + df['REB'] + df['AST'] + df['STL'] + df['BLK'] -
-            (df['FGA'] - df['FGM']) - (df['FTA'] - df['FTM']) - df['TO']
-        )
-        
-        return df
+        try:
+            # Clean and process games data
+            games_df['date'] = pd.to_datetime(games_df['GAME_DATE_EST'])
+            games_df['season'] = games_df['SEASON']
+            
+            # Map team IDs to names using teams_df
+            team_id_to_name = dict(zip(teams_df['TEAM_ID'], teams_df['NICKNAME']))
+            
+            games_df['home_team'] = games_df['HOME_TEAM_ID'].map(team_id_to_name)
+            games_df['away_team'] = games_df['VISITOR_TEAM_ID'].map(team_id_to_name)
+            games_df['home_points'] = games_df['PTS_home']
+            games_df['away_points'] = games_df['PTS_away']
+            
+            # Determine game type
+            def determine_game_type(row):
+                if row['GAME_STATUS_TEXT'] == 'PPD':  # Postponed games
+                    return None
+                elif row['SEASON_TYPE'] == 'Regular Season':
+                    return 'regular_season'
+                elif row['SEASON_TYPE'] == 'Playoffs':
+                    return 'playoffs'
+                elif row['SEASON_TYPE'] == 'Pre Season':
+                    return 'preseason'
+                else:
+                    return 'regular_season'  # Default to regular season
+            
+            games_df['game_type'] = games_df.apply(determine_game_type, axis=1)
+            
+            # Filter out games without a type (postponed games)
+            games_df = games_df[games_df['game_type'].notna()]
+            
+            # Save teams to database
+            for _, team in teams_df.iterrows():
+                try:
+                    upsert_team(
+                        session=session,
+                        name=team['NICKNAME'],
+                        abbreviation=team['ABBREVIATION'],
+                        conference=team['CONFERENCE'],
+                        division=team['DIVISION']
+                    )
+                except Exception as e:
+                    logging.error(f"Error saving team {team['NICKNAME']}: {e}")
+                    continue
+            
+            # Save games to database
+            for _, game in games_df.iterrows():
+                try:
+                    save_game(
+                        session=session,
+                        date=game['date'],
+                        season=game['season'],
+                        home_team=game['home_team'],
+                        away_team=game['away_team'],
+                        home_score=game['home_points'],
+                        away_score=game['away_points'],
+                        game_type=game['game_type'],
+                        source='kaggle'
+                    )
+                except Exception as e:
+                    logging.error(f"Error saving game {game['home_team']} vs {game['away_team']}: {e}")
+                    continue
+            
+            # Calculate and save team stats
+            for season in games_df['season'].unique():
+                season_games = games_df[games_df['season'] == season]
+                
+                for team_id in teams_df['TEAM_ID'].unique():
+                    team_name = team_id_to_name[team_id]
+                    
+                    # Get home and away games for the team
+                    home_games = season_games[season_games['HOME_TEAM_ID'] == team_id]
+                    away_games = season_games[season_games['VISITOR_TEAM_ID'] == team_id]
+                    
+                    # Calculate basic stats
+                    wins = len(home_games[home_games['home_points'] > home_games['away_points']]) + \
+                           len(away_games[away_games['away_points'] > away_games['home_points']])
+                           
+                    losses = len(home_games[home_games['home_points'] < home_games['away_points']]) + \
+                            len(away_games[away_games['away_points'] < away_games['home_points']])
+                            
+                    games_played = len(home_games) + len(away_games)
+                    
+                    if games_played > 0:
+                        points_scored = home_games['home_points'].sum() + away_games['away_points'].sum()
+                        points_allowed = home_games['away_points'].sum() + away_games['home_points'].sum()
+                        
+                        stats_dict = {
+                            'games_played': games_played,
+                            'wins': wins,
+                            'losses': losses,
+                            'win_pct': wins / games_played if games_played > 0 else 0,
+                            'points_per_game': points_scored / games_played,
+                            'points_allowed_per_game': points_allowed / games_played,
+                            'offensive_rating': (points_scored / games_played) * 100,  # Simple offensive rating
+                            'defensive_rating': (points_allowed / games_played) * 100,  # Simple defensive rating
+                            'net_rating': ((points_scored - points_allowed) / games_played) * 100,
+                            'pace': 100.0  # Default pace
+                        }
+                        
+                        # Save stats for the last date of each month in the season
+                        monthly_dates = pd.date_range(
+                            start=season_games['date'].min(),
+                            end=season_games['date'].max(),
+                            freq='M'
+                        )
+                        
+                        for date in monthly_dates:
+                            save_team_stats(
+                                session=session,
+                                team_name=team_name,
+                                date=date,
+                                season=season,
+                                stats_dict=stats_dict
+                            )
+            
+            session.commit()
+            return games_df
+            
+        except Exception as e:
+            logging.error(f"Error processing Kaggle data: {e}")
+            session.rollback()
+            raise
+        finally:
+            session.close()
     
     def combine_data_sources(self, bref_games, bref_advanced, kaggle_data):
         """Combine data from both sources"""
@@ -937,21 +1049,23 @@ def main():
     
     collector = NBADataCollector()
     
-    # Fetch Basketball Reference data
-    print("Fetching Basketball Reference data...")
+    # Try Kaggle data first
+    print("Fetching Kaggle data...")
+    try:
+        kaggle_data = collector.fetch_kaggle_data()
+        if kaggle_data is not None:
+            print("Successfully loaded Kaggle data")
+            return
+    except Exception as e:
+        print(f"Error fetching Kaggle data: {e}")
+    
+    # Fall back to Basketball Reference if Kaggle fails
+    print("Falling back to Basketball Reference data...")
     games_df, advanced_df = collector.fetch_basketball_reference()
     
     # Fetch player stats for current season
     print("Fetching player stats...")
     players_df = collector.fetch_player_stats(2024)
-    
-    # Optional: Fetch Kaggle data
-    try:
-        print("Skipping Kaggle data...")
-        # kaggle_data = collector.fetch_kaggle_data()
-    except Exception as e:
-        print(f"Error fetching Kaggle data: {e}")
-        kaggle_data = None
     
     print("Data collection complete!")
 

@@ -5,6 +5,8 @@ import anthropic
 from datetime import datetime
 from pathlib import Path
 
+anthropic_key = os.getenv('ANTHROPIC_API_KEY')
+
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 from config import *
@@ -12,16 +14,16 @@ from config import *
 class ClaudeAutomation:
     def __init__(self):
         self.setup_logging()
-        self.client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        self.client = anthropic.Anthropic(api_key=anthropic_key)
         
     def setup_logging(self):
         """Configure logging for the automation system"""
-        os.makedirs(LOGS_DIR, exist_ok=True)
+        os.makedirs('./logs', exist_ok=True)
         logging.basicConfig(
             level=logging.INFO,
-            format=LOG_FORMAT,
+            format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(LOG_FILE),
+                logging.FileHandler('./logs/claude_automation.log'),
                 logging.StreamHandler()
             ]
         )
@@ -29,7 +31,7 @@ class ClaudeAutomation:
         
     def load_prompt_template(self, task_type):
         """Load prompt template for the given task type"""
-        prompt_file = PROMPTS_DIR / f"{task_type}.txt"
+        prompt_file = './prompts' / f"{task_type}.txt"
         try:
             with open(prompt_file, 'r') as f:
                 return f.read()
@@ -43,7 +45,7 @@ class ClaudeAutomation:
         
         # Read main data collector file
         try:
-            with open(PROJECT_PATHS["data_collector"], 'r') as f:
+            with open('./src/nothingbutnet/data_collector.py', 'r') as f:
                 context["data_collector"] = f.read()
         except Exception as e:
             self.logger.error(f"Error reading data collector: {e}")
@@ -85,9 +87,9 @@ class ClaudeAutomation:
             
     def save_response(self, task_type, response):
         """Save Claude's response to output directory"""
-        os.makedirs(OUTPUTS_DIR, exist_ok=True)
+        os.makedirs('./outputs', exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = OUTPUTS_DIR / f"{task_type}_{timestamp}.txt"
+        output_file = './outputs' / f"{task_type}_{timestamp}.txt"
         
         try:
             with open(output_file, 'w') as f:
