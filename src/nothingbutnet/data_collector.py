@@ -97,6 +97,9 @@ class NBADataCollector:
         self.last_bref_request = 0
         self.last_espn_request = 0
         
+        self.advanced_stats_url = "https://www.basketball-reference.com/leagues/NBA_{}_ratings.html"
+        self.team_stats_url = "https://www.basketball-reference.com/leagues/NBA_{}_team-stats.html"
+        
     def _create_session(self):
         session = requests.Session()
         session.headers.update({
@@ -1042,6 +1045,83 @@ class NBADataCollector:
     def standardize_team_name(self, name):
         """Convert team names to Basketball Reference format"""
         return self.team_name_map.get(name, name)
+
+    def get_team_advanced_stats(self, team, season):
+        """Get advanced stats for a team including off/def rating and pace"""
+        url = self.advanced_stats_url.format(season)
+        
+        # Add delay to respect rate limiting
+        time.sleep(6)
+        
+        response = self._cached_request(url)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        stats_table = soup.find('table', id='advanced-team')
+        team_row = stats_table.find('tr', attrs={'data-stat': 'team'})
+        
+        return {
+            'offensive_rating': float(team_row.find('td', attrs={'data-stat': 'off_rtg'}).text),
+            'defensive_rating': float(team_row.find('td', attrs={'data-stat': 'def_rtg'}).text),
+            'net_rating': float(team_row.find('td', attrs={'data-stat': 'net_rtg'}).text),
+            'pace': float(team_row.find('td', attrs={'data-stat': 'pace'}).text),
+        }
+    
+    def get_team_stats(self, team, season):
+        """Get rebounding and turnover stats"""
+        url = self.team_stats_url.format(season)
+        
+        time.sleep(6)
+        
+        response = self._cached_request(url)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        stats_table = soup.find('table', id='team-stats')
+        team_row = stats_table.find('tr', attrs={'data-stat': 'team'})
+        
+        return {
+            'orb_per_game': float(team_row.find('td', attrs={'data-stat': 'orb'}).text),
+            'drb_per_game': float(team_row.find('td', attrs={'data-stat': 'drb'}).text),
+            'trb_per_game': float(team_row.find('td', attrs={'data-stat': 'trb'}).text),
+            'tov_rate': float(team_row.find('td', attrs={'data-stat': 'tov_pct'}).text),
+        }
+
+    def collect_game_data(self, game):
+        """Collect all relevant stats for a game"""
+        # ... existing code ...
+        
+        # Add new advanced stats
+        home_advanced = self.get_team_advanced_stats(game.home_team, game.season)
+        away_advanced = self.get_team_advanced_stats(game.away_team, game.season)
+        
+        # Add new team stats
+        home_stats = self.get_team_stats(game.home_team, game.season)
+        away_stats = self.get_team_stats(game.away_team, game.season)
+        
+        return {
+            # ... existing features ...
+            
+            # Advanced stats
+            'home_offensive_rating': home_advanced['offensive_rating'],
+            'home_defensive_rating': home_advanced['defensive_rating'],
+            'home_net_rating': home_advanced['net_rating'],
+            'home_pace': home_advanced['pace'],
+            
+            'away_offensive_rating': away_advanced['offensive_rating'],
+            'away_defensive_rating': away_advanced['defensive_rating'],
+            'away_net_rating': away_advanced['net_rating'],
+            'away_pace': away_advanced['pace'],
+            
+            # Rebounding and turnover stats
+            'home_orb_per_game': home_stats['orb_per_game'],
+            'home_drb_per_game': home_stats['drb_per_game'],
+            'home_trb_per_game': home_stats['trb_per_game'],
+            'home_tov_rate': home_stats['tov_rate'],
+            
+            'away_orb_per_game': away_stats['orb_per_game'],
+            'away_drb_per_game': away_stats['drb_per_game'],
+            'away_trb_per_game': away_stats['trb_per_game'],
+            'away_tov_rate': away_stats['tov_rate'],
+        }
 
 def main():
     # Initialize database

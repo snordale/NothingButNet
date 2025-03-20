@@ -8,7 +8,8 @@ from sqlalchemy import desc
 
 from nothingbutnet.database import init_db, get_session, Game, Team, TeamStats
 from nothingbutnet.models.spread_predictor import SpreadPredictor, SpreadPredictorNet
-from nothingbutnet.data_collector import NBADataCollector
+from nothingbutnet.data_collector import NBADataCollector, DataCollector
+from nothingbutnet.config import load_config
 
 def setup_logging():
     # Create logs directory if it doesn't exist
@@ -452,5 +453,41 @@ def predict_upcoming_games():
         logging.error(f"Error in prediction pipeline: {e}", exc_info=True)
         raise
 
+def predict_tonight():
+    config = load_config()
+    collector = DataCollector()
+    predictor = SpreadPredictor()
+    
+    # Get today's games
+    today = datetime.now().strftime('%Y-%m-%d')
+    games = collector.get_games(today)
+    
+    predictions = []
+    for game in games:
+        # Collect features for the game
+        features = collector.collect_game_data(game)
+        
+        # Get prediction and confidence
+        prediction, confidence = predictor.predict(features)
+        
+        predictions.append({
+            'home_team': game.home_team,
+            'away_team': game.away_team,
+            'predicted_spread': prediction,
+            'confidence': confidence,
+            'recommended_bet': 'BET' if confidence > 0.65 else 'PASS'
+        })
+    
+    # Display predictions
+    df = pd.DataFrame(predictions)
+    print("\nPredictions for tonight's games:")
+    print(df)
+    
+    # Show high confidence bets
+    high_conf = df[df['confidence'] > 0.65]
+    if not high_conf.empty:
+        print("\nRecommended bets (>65% confidence):")
+        print(high_conf)
+
 if __name__ == "__main__":
-    predict_upcoming_games() 
+    predict_tonight() 
